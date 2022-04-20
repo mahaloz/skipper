@@ -88,8 +88,8 @@ type Options struct {
 	// in the cluster-scope.
 	KubernetesNamespace string
 
-	// KubernetesIngressV1 is used to switch between v1beta1 and v1. Kubernetes version 1.22 stopped support
-	// for v1beta1, so we have to provide a migration path and this will someday become the default.
+	// *DEPRECATED* KubernetesIngressV1 was used to switch between v1beta1 and v1. Kubernetes version 1.22 stopped support
+	// for v1beta1, and we abandoned it in v0.14.0. This is unused.
 	KubernetesIngressV1 bool
 
 	// *DEPRECATED* KubernetesEnableEastWest if set adds automatically routes

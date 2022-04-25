@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/cenkalti/backoff"
@@ -23,8 +24,12 @@ import (
 
 // RedisOptions is used to configure the redis.Ring
 type RedisOptions struct {
-	// Addrs are the list of redis shards
+	// DEPRECATED Addrs are the list of redis shards
 	Addrs []string
+
+	// AddrsCallback a func to get the list of redis shards
+	AddrsCallback func() []string
+
 	// Password is the password needed to connect to Redis server
 	Password string
 
@@ -73,6 +78,8 @@ type RedisOptions struct {
 // opentracing. You can set timeouts and the defaults are set to be ok
 // to be in the hot path of low latency production requests.
 type RedisRingClient struct {
+	mu            sync.RWMutex
+	ringOptions   *redis.RingOptions
 	ring          *redis.Ring
 	log           logging.Logger
 	metrics       metrics.Metrics
@@ -200,9 +207,8 @@ func NewRedisRingClient(ro *RedisOptions) *RedisRingClient {
 			ringOptions.NewConsistentHash = NewMultiprobe
 		}
 
-		for idx, addr := range ro.Addrs {
-			ringOptions.Addrs[fmt.Sprintf("redis%d", idx)] = addr
-		}
+		updateMembers(r)
+
 		ringOptions.ReadTimeout = ro.ReadTimeout
 		ringOptions.WriteTimeout = ro.WriteTimeout
 		ringOptions.PoolTimeout = ro.PoolTimeout
@@ -219,18 +225,55 @@ func NewRedisRingClient(ro *RedisOptions) *RedisRingClient {
 		}
 
 		r.options = ro
-		r.ring = redis.NewRing(ringOptions)
+		r.ringOptions = ringOptions
+		r.ring = redis.NewRing(r.ringOptions)
 		r.log = ro.Log
 		r.metricsPrefix = ro.MetricsPrefix
+
+		go func() {
+			ticker := time.NewTicker(10 * time.Second)
+			for {
+				select {
+				case <-r.quit:
+					return
+				case <-ticker.C:
+					r.log.Info("*** updating members...")
+					updateMembers(r)
+					r.log.Info("*** updated members")
+				}
+			}
+		}()
+
 	}
 
 	return r
 }
 
+func updateMembers(r *RedisRingClient) {
+	if r == nil || r.options == nil {
+		return
+	}
+	a := r.options.AddrsCallback()
+	if len(a) != len(r.ringOptions.Addrs) {
+		r.mu.Lock()
+		for idx, addr := range a {
+			r.ringOptions.Addrs[fmt.Sprintf("redis%d", idx)] = addr
+		}
+		r.ring.Close()
+		r.ring = redis.NewRing(r.ringOptions)
+		r.mu.Unlock()
+		r.log.Infof("Updated redis ring shards to %d", len(a))
+	} else {
+		r.log.Info("redis ring: nothing to update")
+	}
+}
+
 func (r *RedisRingClient) RingAvailable() bool {
 	var err error
 	err = backoff.Retry(func() error {
+		r.mu.RLock()
 		_, err = r.ring.Ping(context.Background()).Result()
+		r.mu.RUnlock()
 		if err != nil {
 			r.log.Infof("Failed to ping redis, retry with backoff: %v", err)
 		}
@@ -245,7 +288,9 @@ func (r *RedisRingClient) StartMetricsCollection() {
 		for {
 			select {
 			case <-time.After(r.options.ConnMetricsInterval):
+				r.mu.RLock()
 				stats := r.ring.PoolStats()
+				r.mu.RUnlock()
 				// counter values
 				r.metrics.UpdateGauge(r.metricsPrefix+"hits", float64(stats.Hits))
 				r.metrics.UpdateGauge(r.metricsPrefix+"misses", float64(stats.Misses))
@@ -274,36 +319,50 @@ func (r *RedisRingClient) Close() {
 }
 
 func (r *RedisRingClient) Get(ctx context.Context, key string) (string, error) {
+	r.mu.RLock()
 	res := r.ring.Get(ctx, key)
+	r.mu.RUnlock()
 	return res.Val(), res.Err()
 }
 func (r *RedisRingClient) Set(ctx context.Context, key string, value interface{}, expiration time.Duration) (string, error) {
+	r.mu.RLock()
 	res := r.ring.Set(ctx, key, value, expiration)
+	r.mu.RUnlock()
 	return res.Result()
 }
 
 func (r *RedisRingClient) ZAdd(ctx context.Context, key string, val int64, score float64) (int64, error) {
+	r.mu.RLock()
 	res := r.ring.ZAdd(ctx, key, &redis.Z{Member: val, Score: score})
+	r.mu.RUnlock()
 	return res.Val(), res.Err()
 }
 
 func (r *RedisRingClient) ZRem(ctx context.Context, key string, members ...interface{}) (int64, error) {
+	r.mu.RLock()
 	res := r.ring.ZRem(ctx, key, members...)
+	r.mu.RUnlock()
 	return res.Val(), res.Err()
 }
 
 func (r *RedisRingClient) Expire(ctx context.Context, key string, expiration time.Duration) (bool, error) {
+	r.mu.RLock()
 	res := r.ring.Expire(ctx, key, expiration)
+	r.mu.RUnlock()
 	return res.Val(), res.Err()
 }
 
 func (r *RedisRingClient) ZRemRangeByScore(ctx context.Context, key string, min, max float64) (int64, error) {
+	r.mu.RLock()
 	res := r.ring.ZRemRangeByScore(ctx, key, fmt.Sprint(min), fmt.Sprint(max))
+	r.mu.RUnlock()
 	return res.Val(), res.Err()
 }
 
 func (r *RedisRingClient) ZCard(ctx context.Context, key string) (int64, error) {
+	r.mu.RLock()
 	res := r.ring.ZCard(ctx, key)
+	r.mu.RUnlock()
 	return res.Val(), res.Err()
 }
 
@@ -314,7 +373,9 @@ func (r *RedisRingClient) ZRangeByScoreWithScoresFirst(ctx context.Context, key 
 		Offset: offset,
 		Count:  count,
 	}
+	r.mu.RLock()
 	res := r.ring.ZRangeByScoreWithScores(ctx, key, opt)
+	r.mu.RUnlock()
 	zs, err := res.Result()
 	if err != nil {
 		return nil, err

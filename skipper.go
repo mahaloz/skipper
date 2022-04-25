@@ -222,6 +222,12 @@ type Options struct {
 	// used with external name services (type=ExternalName).
 	KubernetesAllowedExternalNames []*regexp.Regexp
 
+	// KubernetesRedisNamespace to be used to lookup ring shards dynamically
+	KubernetesRedisNamespace string
+
+	// KubernetesRedisName to be used to lookup ring shards dynamically
+	KubernetesRedisName string
+
 	// *DEPRECATED* API endpoint of the Innkeeper service, storing route definitions.
 	InnkeeperUrl string
 
@@ -1356,11 +1362,35 @@ func run(o Options, sig chan os.Signal, idleConnsCH chan struct{}) error {
 
 	var swarmer ratelimit.Swarmer
 	var redisOptions *skpnet.RedisOptions
+	log.Infof("enable swarm: %v", o.EnableSwarm)
 	if o.EnableSwarm {
 		if len(o.SwarmRedisURLs) > 0 {
 			log.Infof("Redis based swarm with %d shards", len(o.SwarmRedisURLs))
+
+			cb := func() []string {
+				return o.SwarmRedisURLs
+			}
+			if o.KubernetesRedisNamespace != "" && o.KubernetesRedisName != "" {
+				var kdc *kubernetes.Client
+				for _, dc := range dataClients {
+					if kc, ok := dc.(*kubernetes.Client); ok {
+						kdc = kc
+						break
+					}
+				}
+				log.Infof("%s/%s cb %v", o.KubernetesRedisNamespace, o.KubernetesRedisName, kdc)
+				cb = func() []string {
+					kdc := kdc
+					log.Info("return closure")
+					return func(kdc *kubernetes.Client) []string {
+						a := kdc.GetEndpointAdresses(o.KubernetesRedisNamespace, o.KubernetesRedisName)
+						log.Infof("closure called and found %d", len(a))
+						return a
+					}(kdc)
+				}
+			}
 			redisOptions = &skpnet.RedisOptions{
-				Addrs:               o.SwarmRedisURLs,
+				AddrsCallback:       cb,
 				Password:            o.SwarmRedisPassword,
 				HashAlgorithm:       o.SwarmRedisHashAlgorithm,
 				DialTimeout:         o.SwarmRedisDialTimeout,
@@ -1371,6 +1401,7 @@ func run(o Options, sig chan os.Signal, idleConnsCH chan struct{}) error {
 				MaxIdleConns:        o.SwarmRedisMaxIdleConns,
 				ConnMetricsInterval: o.redisConnMetricsInterval,
 				Tracer:              tracer,
+				Log:                 log.New(),
 			}
 		} else {
 			log.Infof("Start swim based swarm")

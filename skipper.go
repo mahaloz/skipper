@@ -1371,6 +1371,7 @@ func run(o Options, sig chan os.Signal, idleConnsCH chan struct{}) error {
 				return o.SwarmRedisURLs
 			}
 			if o.KubernetesRedisNamespace != "" && o.KubernetesRedisName != "" {
+				log.Infof("%s/%s replace cb", o.KubernetesRedisNamespace, o.KubernetesRedisName)
 				var kdc *kubernetes.Client
 				for _, dc := range dataClients {
 					if kc, ok := dc.(*kubernetes.Client); ok {
@@ -1378,18 +1379,19 @@ func run(o Options, sig chan os.Signal, idleConnsCH chan struct{}) error {
 						break
 					}
 				}
-				log.Infof("%s/%s cb %v", o.KubernetesRedisNamespace, o.KubernetesRedisName, kdc)
+				log.Infof("%s/%s kdc != nil: %v", o.KubernetesRedisNamespace, o.KubernetesRedisName, kdc != nil)
 				cb = func() []string {
-					kdc := kdc
-					log.Info("return closure")
-					return func(kdc *kubernetes.Client) []string {
-						a := kdc.GetEndpointAdresses(o.KubernetesRedisNamespace, o.KubernetesRedisName)
-						log.Infof("closure called and found %d", len(a))
-						return a
-					}(kdc)
+					// kdc := kdc
+					// log.Info("return closure")
+					// return func(kdc *kubernetes.Client) []string {
+					a := kdc.GetEndpointAdresses(o.KubernetesRedisNamespace, o.KubernetesRedisName)
+					log.Infof("closure called and found %d", len(a))
+					return a
+					// }(kdc)
 				}
 			}
 			redisOptions = &skpnet.RedisOptions{
+				Addrs:               o.SwarmRedisURLs,
 				AddrsCallback:       cb,
 				Password:            o.SwarmRedisPassword,
 				HashAlgorithm:       o.SwarmRedisHashAlgorithm,
@@ -1733,6 +1735,7 @@ func run(o Options, sig chan os.Signal, idleConnsCH chan struct{}) error {
 
 	// wait for the first route configuration to be loaded if enabled:
 	<-routing.FirstLoad()
+	log.Info("Dataclients are updated once, first load complete")
 
 	return listenAndServeQuit(o.CustomHttpHandlerWrap(proxy), &o, sig, idleConnsCH, mtr, cr)
 }

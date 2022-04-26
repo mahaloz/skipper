@@ -42,6 +42,10 @@ func (state *clusterState) getServiceRG(namespace, name string) (*service, error
 	return s, nil
 }
 
+func (state *clusterState) GetEndpointsByService(namespace, name, protocol string, servicePort *servicePort) []string {
+	return state.getEndpointsByService(namespace, name, protocol, servicePort)
+}
+
 func (state *clusterState) getEndpointsByService(namespace, name, protocol string, servicePort *servicePort) []string {
 	epID := endpointID{
 		ResourceID: newResourceID(namespace, name),
@@ -62,6 +66,10 @@ func (state *clusterState) getEndpointsByService(namespace, name, protocol strin
 	sort.Strings(targets)
 	state.cachedEndpoints[epID] = targets
 	return targets
+}
+
+func (state *clusterState) GetEndpointsByTarget(namespace, name, protocol string, target *definitions.BackendPort) []string {
+	return state.getEndpointsByTarget(namespace, name, protocol, target)
 }
 
 func (state *clusterState) getEndpointsByTarget(namespace, name, protocol string, target *definitions.BackendPort) []string {

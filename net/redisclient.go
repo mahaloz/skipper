@@ -10,6 +10,7 @@ import (
 	"github.com/cenkalti/backoff"
 	"github.com/go-redis/redis/v8"
 	"github.com/opentracing/opentracing-go"
+	"github.com/sirupsen/logrus"
 	"github.com/zalando/skipper/logging"
 	"github.com/zalando/skipper/metrics"
 
@@ -32,6 +33,10 @@ type RedisOptions struct {
 
 	// Password is the password needed to connect to Redis server
 	Password string
+
+	// UpdateMembers intervall in which we check if we got an
+	// update how many redis shards we have
+	UpdateMembers time.Duration
 
 	// ReadTimeout for redis socket reads
 	ReadTimeout time.Duration
@@ -207,7 +212,9 @@ func NewRedisRingClient(ro *RedisOptions) *RedisRingClient {
 			ringOptions.NewConsistentHash = NewMultiprobe
 		}
 
-		updateMembers(r)
+		for idx, addr := range ro.AddrsCallback() {
+			ringOptions.Addrs[fmt.Sprintf("redis%d", idx)] = addr
+		}
 
 		ringOptions.ReadTimeout = ro.ReadTimeout
 		ringOptions.WriteTimeout = ro.WriteTimeout
@@ -223,6 +230,9 @@ func NewRedisRingClient(ro *RedisOptions) *RedisRingClient {
 		if ro.Tracer != nil {
 			r.tracer = ro.Tracer
 		}
+		if ro.UpdateMembers == 0 {
+			ro.UpdateMembers = time.Minute
+		}
 
 		r.options = ro
 		r.ringOptions = ringOptions
@@ -230,8 +240,12 @@ func NewRedisRingClient(ro *RedisOptions) *RedisRingClient {
 		r.log = ro.Log
 		r.metricsPrefix = ro.MetricsPrefix
 
+		if r.log == nil {
+			r.log = logrus.New()
+		}
+
 		go func() {
-			ticker := time.NewTicker(10 * time.Second)
+			ticker := time.NewTicker(ro.UpdateMembers)
 			for {
 				select {
 				case <-r.quit:
@@ -253,16 +267,22 @@ func updateMembers(r *RedisRingClient) {
 	if r == nil || r.options == nil {
 		return
 	}
+
 	a := r.options.AddrsCallback()
+
 	if len(a) != len(r.ringOptions.Addrs) {
-		r.mu.Lock()
+		ringOptions := r.ringOptions
+		ringOptions.Addrs = make(map[string]string)
 		for idx, addr := range a {
-			r.ringOptions.Addrs[fmt.Sprintf("redis%d", idx)] = addr
+			ringOptions.Addrs[fmt.Sprintf("redis%d", idx)] = addr
 		}
-		r.ring.Close()
-		r.ring = redis.NewRing(r.ringOptions)
+		newR := redis.NewRing(ringOptions)
+
+		r.mu.Lock()
+		r.ring = newR // should we close the other?
 		r.mu.Unlock()
-		r.log.Infof("Updated redis ring shards to %d", len(a))
+
+		r.log.Infof("redis ring: updated shards to %d", len(a))
 	} else {
 		r.log.Info("redis ring: nothing to update")
 	}

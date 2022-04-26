@@ -496,15 +496,13 @@ func (c *Client) fetchDefaultFilterConfigs() defaultFilters {
 
 func (c *Client) GetEndpointAdresses(ns, name string) []string {
 	if c.state == nil {
+		log.Info("state is nil")
 		return nil
 	}
 
-	addrs := c.state.cachedEndpoints[endpointID{
-		ResourceID: definitions.ResourceID{
-			Namespace: ns,
-			Name:      name,
-		},
-	}]
+	addrs := c.state.GetEndpointsByTarget(ns, name, "TCP", &definitions.BackendPort{
+		Value: 6379,
+	})
 	log.Infof("GetEndpointAdresses found %d addrs", len(addrs))
 
 	return addrs

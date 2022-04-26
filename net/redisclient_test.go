@@ -20,21 +20,26 @@ func TestRedisClient(t *testing.T) {
 	defer done()
 
 	for _, tt := range []struct {
-		name    string
-		options *RedisOptions
-		wantErr bool
+		name       string
+		options    *RedisOptions
+		updateRing int
+		wantErr    bool
 	}{
 		{
 			name: "All defaults",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			wantErr: false,
 		},
 		{
 			name: "With tracer",
 			options: &RedisOptions{
-				Addrs:  []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 				Tracer: tracer,
 			},
 			wantErr: false,
@@ -42,10 +47,32 @@ func TestRedisClient(t *testing.T) {
 		{
 			name: "With metrics",
 			options: &RedisOptions{
-				Addrs:               []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 				ConnMetricsInterval: 10 * time.Millisecond,
 			},
 			wantErr: false,
+		},
+		{
+			name: "Update ring increase members",
+			options: &RedisOptions{
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
+				UpdateMembers: time.Second,
+			},
+			updateRing: 1,
+		},
+		{
+			name: "Update ring decrease members",
+			options: &RedisOptions{
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
+				UpdateMembers: time.Second,
+			},
+			updateRing: -1,
 		},
 	} {
 		tt := tt
@@ -65,6 +92,56 @@ func TestRedisClient(t *testing.T) {
 			if tt.options.ConnMetricsInterval != defaultConnMetricsInterval {
 				cli.StartMetricsCollection()
 				time.Sleep(tt.options.ConnMetricsInterval)
+			}
+
+			if tt.updateRing > 0 {
+				newAddrs := make([]string, 0, tt.updateRing)
+				for i := 0; i < tt.updateRing; i++ {
+					redisAddr, done := redistest.NewTestRedis(t)
+					defer done()
+					newAddrs = append(newAddrs, redisAddr)
+				}
+
+				tt.options.AddrsCallback = func() []string {
+					return append(newAddrs, redisAddr)
+				}
+
+				time.Sleep(tt.options.UpdateMembers + time.Second)
+
+				if !cli.RingAvailable() {
+					t.Errorf("Failed to have a connected redis client after update, ring not available")
+				}
+			} else if tt.updateRing < 0 {
+				newRedisAddr, done := redistest.NewTestRedis(t)
+				defer done()
+
+				tt.options.AddrsCallback = func() []string {
+					return []string{redisAddr, newRedisAddr}
+				}
+
+				time.Sleep(tt.options.UpdateMembers + time.Second)
+
+				if !cli.RingAvailable() {
+					t.Errorf("Failed to have a connected redis client after increase, ring not available")
+				}
+
+				tt.options.AddrsCallback = func() []string {
+					return []string{newRedisAddr}
+				}
+				time.Sleep(tt.options.UpdateMembers + time.Second)
+
+				if !cli.RingAvailable() {
+					t.Errorf("Failed to have a connected redis client after decrease, ring not available")
+				}
+
+				tt.options.AddrsCallback = func() []string {
+					return []string{}
+				}
+				time.Sleep(tt.options.UpdateMembers + time.Second)
+
+				if cli.RingAvailable() {
+					t.Error("Failed to have removed all connected redis clients")
+				}
 			}
 		})
 	}
@@ -87,14 +164,18 @@ func TestRedisClientGetSet(t *testing.T) {
 		{
 			name: "add none",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			wantErr: true,
 		},
 		{
 			name: "add one, get one, no expiration",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			key:     "k1",
 			value:   "foo",
@@ -104,7 +185,9 @@ func TestRedisClientGetSet(t *testing.T) {
 		{
 			name: "add one, get one, with expiration",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			key:     "k1",
 			value:   "foo",
@@ -115,7 +198,9 @@ func TestRedisClientGetSet(t *testing.T) {
 		{
 			name: "add one, get none, with expiration, wait to expire",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			key:     "k1",
 			value:   "foo",
@@ -126,7 +211,9 @@ func TestRedisClientGetSet(t *testing.T) {
 		{
 			name: "add one, get one, no expiration, with Rendezvous hash",
 			options: &RedisOptions{
-				Addrs:         []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 				HashAlgorithm: "rendezvous",
 			},
 			key:     "k1",
@@ -138,7 +225,9 @@ func TestRedisClientGetSet(t *testing.T) {
 		{
 			name: "add one, get one, no expiration, with Rendezvous Vnodes hash",
 			options: &RedisOptions{
-				Addrs:         []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 				HashAlgorithm: "rendezvousVnodes",
 			},
 			key:     "k1",
@@ -150,7 +239,9 @@ func TestRedisClientGetSet(t *testing.T) {
 		{
 			name: "add one, get one, no expiration, with Jump hash",
 			options: &RedisOptions{
-				Addrs:         []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 				HashAlgorithm: "jump",
 			},
 			key:     "k1",
@@ -162,7 +253,9 @@ func TestRedisClientGetSet(t *testing.T) {
 		{
 			name: "add one, get one, no expiration, with Multiprobe hash",
 			options: &RedisOptions{
-				Addrs:         []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 				HashAlgorithm: "mpchash",
 			},
 			key:     "k1",
@@ -217,14 +310,18 @@ func TestRedisClientZAddZCard(t *testing.T) {
 		{
 			name: "add none",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			wantErr: true,
 		},
 		{
 			name: "add one",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			key: "k1",
 			h: map[string][]valScore{
@@ -241,7 +338,9 @@ func TestRedisClientZAddZCard(t *testing.T) {
 		{
 			name: "add one more values",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			key: "k2",
 			h: map[string][]valScore{
@@ -264,7 +363,9 @@ func TestRedisClientZAddZCard(t *testing.T) {
 		{
 			name: "add 2 keys and values",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			key: "k1",
 			h: map[string][]valScore{
@@ -293,7 +394,9 @@ func TestRedisClientZAddZCard(t *testing.T) {
 		{
 			name: "add 2 keys and values",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			key: "k2",
 			h: map[string][]valScore{
@@ -381,7 +484,9 @@ func TestRedisClientExpire(t *testing.T) {
 		{
 			name: "add none",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			zcard:            0,
 			zcardAfterExpire: 0,
@@ -390,7 +495,9 @@ func TestRedisClientExpire(t *testing.T) {
 		{
 			name: "add one which does not expire",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			key: "k1",
 			h: map[string][]valScore{
@@ -409,7 +516,9 @@ func TestRedisClientExpire(t *testing.T) {
 		{
 			name: "add one which does expire",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			key: "k1",
 			h: map[string][]valScore{
@@ -429,7 +538,9 @@ func TestRedisClientExpire(t *testing.T) {
 		{
 			name: "add one more values expire all",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			key: "k2",
 			h: map[string][]valScore{
@@ -516,14 +627,18 @@ func TestRedisClientZRemRangeByScore(t *testing.T) {
 		{
 			name: "none",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			wantErr: true,
 		},
 		{
 			name: "delete none",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			key: "k1",
 			h: map[string][]valScore{
@@ -543,7 +658,9 @@ func TestRedisClientZRemRangeByScore(t *testing.T) {
 		{
 			name: "delete one",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			key: "k1",
 			h: map[string][]valScore{
@@ -563,7 +680,9 @@ func TestRedisClientZRemRangeByScore(t *testing.T) {
 		{
 			name: "delete one have more values",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			key: "k2",
 			h: map[string][]valScore{
@@ -589,7 +708,9 @@ func TestRedisClientZRemRangeByScore(t *testing.T) {
 		{
 			name: "delete 2 have more values offset score",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			key: "k2",
 			h: map[string][]valScore{
@@ -688,14 +809,18 @@ func TestRedisClientZRangeByScoreWithScoresFirst(t *testing.T) {
 		{
 			name: "none",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			wantErr: true,
 		},
 		{
 			name: "one key, have one value, get first by min max",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			key: "k1",
 			h: map[string][]valScore{
@@ -714,7 +839,9 @@ func TestRedisClientZRangeByScoreWithScoresFirst(t *testing.T) {
 		{
 			name: "one key, have one value, get none by min max",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			key: "k1",
 			h: map[string][]valScore{
@@ -732,7 +859,9 @@ func TestRedisClientZRangeByScoreWithScoresFirst(t *testing.T) {
 		{
 			name: "one key, have one value, get none by offset",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			key: "k1",
 			h: map[string][]valScore{
@@ -751,7 +880,9 @@ func TestRedisClientZRangeByScoreWithScoresFirst(t *testing.T) {
 		{
 			name: "one key, have more values, get last by offset",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			key: "k2",
 			h: map[string][]valScore{
@@ -778,7 +909,9 @@ func TestRedisClientZRangeByScoreWithScoresFirst(t *testing.T) {
 		{
 			name: "one key, have more values, get second by offset",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			key: "k2",
 			h: map[string][]valScore{
@@ -805,7 +938,9 @@ func TestRedisClientZRangeByScoreWithScoresFirst(t *testing.T) {
 		{
 			name: "one key, have more values, select all get first",
 			options: &RedisOptions{
-				Addrs: []string{redisAddr},
+				AddrsCallback: func() []string {
+					return []string{redisAddr}
+				},
 			},
 			key: "k2",
 			h: map[string][]valScore{

@@ -441,8 +441,6 @@ func (c *clusterClient) loadEndpoints() (map[definitions.ResourceID]*endpoint, e
 		resID := endpoint.Meta.ToResourceID()
 		result[resID] = endpoint
 		if endpoint.Meta.Name == "skipper-ingress-redis" && endpoint.Meta.Namespace == "kube-system" {
-			log.Infof("clusterclient resID %#v", resID)
-			log.Infof("clusterclient found subsets %d", len(endpoint.Subsets))
 			log.Infof("clusterclient found addresses %d", len(endpoint.Subsets[0].Addresses))
 		}
 	}

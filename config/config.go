@@ -771,6 +771,8 @@ func (c *Config) ToOptions() skipper.Options {
 		KubernetesEastWestRangePredicates:  c.KubernetesEastWestRangePredicates,
 		KubernetesOnlyAllowedExternalNames: c.KubernetesOnlyAllowedExternalNames,
 		KubernetesAllowedExternalNames:     c.KubernetesAllowedExternalNames,
+		KubernetesRedisNamespace:           c.KubernetesRedisNamespace,
+		KubernetesRedisName:                c.KubernetesRedisName,
 
 		// API Monitoring:
 		ApiUsageMonitoringEnable:                c.ApiUsageMonitoringEnable,

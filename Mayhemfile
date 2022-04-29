@@ -1,5 +1,5 @@
-project: go-zero
-target: go-zero-stringx
+project: skipper
+target: eskip_parser
 
 cmds:
-  - cmd: /fuzz_stringx_replacer
+  - cmd: /fuzz_eskip_proto_parser

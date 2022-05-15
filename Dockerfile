@@ -8,7 +8,6 @@ RUN apt update && apt install clang -y
 RUN mkdir ~/gopath && \
     export GOPATH="$HOME/gopath" && \
     export PATH="$PATH:$GOPATH/bin" && \
-    export PATH="$PATH:$GOPATH/bin" && \
     cd /go/skipper/eskip && \
     go install -tags production github.com/zalando/skipper && \
     go get github.com/dvyukov/go-fuzz/go-fuzz github.com/dvyukov/go-fuzz/go-fuzz-build && \
